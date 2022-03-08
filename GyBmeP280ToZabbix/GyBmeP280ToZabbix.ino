@@ -18,6 +18,7 @@
 
   Pablo Hawkes
   2021-07-02: original code
+  2022-03-08: added notes about i2c, minor changes
 */
 
 #include <Ethernet.h>
@@ -34,6 +35,12 @@ const char* server = "192.168.1.90";      //ZABBIX Server IP
 const String clientHostName = "Arduino";  //Hostname from this client on Zabbix
 const int port = 10051;                   //Zabbix server port is 10051
 
+//I2C Address (change value according to your sensor).
+//To find sensor address, use this sketch: https://playground.arduino.cc/Main/I2cScanner/
+//BME280_ADDRESS            (0x77) Primary I2C Address
+//BME280_ADDRESS_ALTERNATE  (0x76) Alternate I2C Address
+const int I2cAddress = BME280_ADDRESS_ALTERNATE;
+
 //Zabbix items:
 const String Gybmep280temperatureItemName = "Gybmep280.Temperature";  //Temperature item for gy-bme/p280
 const String Gybmep280HumidityItemName  = "Gybmep280.Humidity";       //Humidity item for gy-bme/p280
@@ -43,6 +50,7 @@ const String Gybmep280AltitudeItemName = "Gybmep280.Altitude";        //Altitude
 //Interval Config:
 const unsigned long interval = 60000;         //Loop time in milliseconds
 const unsigned long ResponseTimeout = 10000;  //Zabbix response timeout in milliseconds
+const byte AvgSamples = 5;                     //Number of samples for values Avg
 
 const double PressureAtSeaLevel = 1015; //Change this value to your city current barometric pressure (https://www.wunderground.com)
 
@@ -52,13 +60,13 @@ unsigned long previousMillis = 0;
 unsigned long currentMillis = 0;
 unsigned long diff = 0;
 unsigned long timeout = 0;
-int firstLengthByte = 0;
-int secondLengthByte = 0;
+byte firstLengthByte = 0;
+byte secondLengthByte = 0;
 
-double Gybmep280Temperature = -99;
-double Gybmep280Humidity = -99;
-double Gybmep280Pressure = -99;
-double Gybmep280Altitude = -99;
+double Gybmep280Temperature;
+double Gybmep280Humidity;
+double Gybmep280Pressure;
+double Gybmep280Altitude;
 
 //Functions:
 void zabbix_sender(void);
@@ -76,7 +84,7 @@ void setup()
   Serial.print(F("IP Address: "));
   Serial.println(Ethernet.localIP());
 
-  if (!bme.begin(BME280_ADDRESS_ALTERNATE)) //Change or clear this parameter in order to use original address
+  if (!bme.begin(I2cAddress))
   {
     Serial.println(F("Could not find a valid BME280 sensor, check wiring, address, sensor ID!"));
     Serial.print(F("SensorID was: 0x"));
@@ -110,11 +118,25 @@ void loop()
 
 void zabbix_sender()
 {
-  //1. Get data from sensors (in int or double):
-  Gybmep280Temperature = bme.readTemperature();
-  Gybmep280Humidity = bme.readHumidity();
-  Gybmep280Pressure = bme.readPressure() / 100;
-  Gybmep280Altitude = bme.readAltitude (PressureAtSeaLevel);
+  //1. Get data from sensors (avg):
+
+  Gybmep280Temperature = 0;
+  Gybmep280Humidity = 0;
+  Gybmep280Pressure = 0;
+  Gybmep280Altitude = 0;
+
+  for (byte i = 0; i < AvgSamples; i++)
+  {
+    Gybmep280Temperature += bme.readTemperature();
+    Gybmep280Humidity += bme.readHumidity();
+    Gybmep280Pressure += bme.readPressure() / 100;
+    Gybmep280Altitude += bme.readAltitude (PressureAtSeaLevel);
+  }
+  
+  Gybmep280Temperature = Gybmep280Temperature / AvgSamples;
+  Gybmep280Humidity = Gybmep280Humidity / AvgSamples;
+  Gybmep280Pressure = Gybmep280Pressure / AvgSamples;
+  Gybmep280Altitude = Gybmep280Altitude / AvgSamples;
 
   Serial.print(F("Gybmep280Temperature (°C): "));
   Serial.println(String(Gybmep280Temperature));
@@ -134,7 +156,7 @@ void zabbix_sender()
   String zabbixMessagePayloadFooter = "] }";
 
   //3.Sending message to zabbix:
-  Serial.print(F("Message sent to zabbix: "));
+  Serial.println(F("Message sent to zabbix: "));
   Serial.println(zabbixMessagePayloadHeader);
   Serial.println(zabbixMessagePayloadPart1);
   Serial.println(zabbixMessagePayloadPart2);
